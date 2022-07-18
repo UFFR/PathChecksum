@@ -157,6 +157,7 @@ public class Main
 		} catch (UnrecognizedOptionException e)
 		{
 			System.err.println("Unrecognized option submitted: " + e.getOption());
+			System.exit(1);
 		} catch (Exception e)
 		{
 			System.err.println("Unable to complete execution, caught exception: " + e + '.');
