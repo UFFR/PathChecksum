@@ -10,15 +10,20 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.Iterator;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
+import org.apache.commons.cli.AlreadySelectedException;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.DefaultParser;
 import org.apache.commons.cli.HelpFormatter;
+import org.apache.commons.cli.MissingArgumentException;
+import org.apache.commons.cli.MissingOptionException;
 import org.apache.commons.cli.Option;
+import org.apache.commons.cli.OptionGroup;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.UnrecognizedOptionException;
 
@@ -31,12 +36,14 @@ public class Main
 	private static final ArrayList<FileChecksum> FILE_CHECKSUMS = new ArrayList<>();
 	static
 	{
-		OPTIONS.addOption("h", "help", false, "Print the help screen.");
-		OPTIONS.addOption("c", "check", false, "Check and verify a checksum file instead of generating one.");
-		OPTIONS.addOption(Option.builder("a").longOpt("algorithm").desc("The algorithm to use for the checksum. Defaults to SHA-256.").argName("algorithm").optionalArg(true).required().build());
-		OPTIONS.addOption(Option.builder("p").longOpt("path").desc("The path to check files. Defaults to running path.").argName("check path").required().build());
-		OPTIONS.addOption("v", "verbose", false, "Verbose printing of the progress. Ideally should only be used when exporting the result, since the printing may be lengthy.");
-		OPTIONS.addOption(Option.builder("e").longOpt("export").desc("Export path of the checksums.").argName("export path").optionalArg(true).build());
+		final OptionGroup group = new OptionGroup();
+		group.addOption(Option.builder("h").longOpt("help").desc("Print the help screen.").build());
+		group.addOption(Option.builder("p").longOpt("path").desc("The path to check files. Defaults to running path.").hasArg().argName("check path").required().build());
+		OPTIONS.addOption(Option.builder("c").longOpt("check").desc("Check and verify a checksum file instead of generating one.").build());
+		OPTIONS.addOption(Option.builder("a").longOpt("algorithm").desc("The algorithm to use for the checksum. Defaults to SHA-256.").hasArg().argName("algorithm").optionalArg(true).build());
+		OPTIONS.addOption(Option.builder("v").longOpt("verbose").desc("Verbose printing of the progress. Ideally should only be used when exporting the result, since the printing may be lengthy.").build());
+		OPTIONS.addOption(Option.builder("e").longOpt("export").desc("Export path of the checksums file or log report.").hasArg().argName("export path").optionalArg(false).build());
+		OPTIONS.addOptionGroup(group);
 	}
 	private static Path path = Paths.get("");
 	private static Path outputPath;
@@ -63,12 +70,15 @@ public class Main
 				HELP_FORMATTER.printHelp("Requires specified algorithm and path, with optional export path.", "PathChecksum v1.5", OPTIONS, "Report bugs to the GitHub at: https://github.com/UFFR/PathChecksum", true);
 				System.exit(0);
 			}
+			if (commandLine.getOptions().length == 0)
+			{
+				System.err.println("No arguments passed, program requires arguments!");
+				System.exit(2);
+			}
 			if (commandLine.hasOption('p'))
 				path = Paths.get(commandLine.getOptionValue('p', ""));
-			if (commandLine.hasOption('a'))
-				digest = MessageDigest.getInstance(commandLine.getOptionValue('a', "SHA-256").toUpperCase());
-			else
-				digest = MessageDigest.getInstance("SHA-256");
+
+			digest = MessageDigest.getInstance(commandLine.getOptionValue('a', "SHA-256").toUpperCase());
 			if (commandLine.hasOption('e'))
 				outputPath = Paths.get(commandLine.getOptionValue('e'));
 			final boolean verbose = commandLine.hasOption('v');
@@ -81,12 +91,13 @@ public class Main
 					final ArrayList<Path> failedPaths = new ArrayList<Path>();
 					final ArrayList<Path> missingPaths = new ArrayList<Path>();
 					final ArrayList<String> badFormats = new ArrayList<String>();
+					BUILDER.append("Checksum integrity report using " + path + " on " + new Date() + '\n');
 					try (final Stream<String> stream = Files.lines(path))
 					{
 						final Iterator<String> iterator = stream.iterator();
 						while (iterator.hasNext())
 						{
-							final StringBuilder checksumLine = new StringBuilder(iterator.next());
+							final String checksumLine = iterator.next();
 							try
 							{
 								final int breakIndex = checksumLine.indexOf("  ");
@@ -100,39 +111,49 @@ public class Main
 									if (verbose)
 										System.out.println(filePath.toString() + ' ' + (success ? "OK" : "FAILED"));
 									if (verbose && !valid)
-										System.err.println("Wrong algorithm used!");
+										System.err.println("Possibly wrong algorithm used. Calculated hash is: " + hexHash.length() + " characters long while stored hash is: " + storedHash.length() + " characters long.");
+									
+									BUILDER.append(filePath).append(success ? " passed." : " failed!").append('\n');
+									if (!valid)
+										BUILDER.append("Possibly wrong algorithm used. Calculated hash is: ").append(hexHash.length()).append(" characters long while stored hash is: ").append(storedHash.length()).append(" characters long.");
 									if (!success)
 										failedPaths.add(filePath);
 								} catch (FileNotFoundException e)
 								{
-									System.err.println(filePath.toString() + ' ' + "NOT FOUND");
+									if (verbose)
+										System.err.println(filePath.toString() + " NOT FOUND");
+									BUILDER.append(filePath).append(" is missing!").append('\n');
 									missingPaths.add(filePath);
 								}
 							} catch (StringIndexOutOfBoundsException e)
 							{
 								if (verbose)
 									System.err.println("Improperly formatted line detected: " + checksumLine);
+								BUILDER.append("Line: [").append(checksumLine).append("] is improperly formatted.");
 								badFormats.add(checksumLine.toString());
 							}
 						}
 					}
 					if (failedPaths.isEmpty())
-						System.out.println("No failed checksums detected.");
+						BUILDER.append("No failed checksums detected.");
 					else
 					{
-						System.err.println("Detected " + failedPaths.size() + "failed files!");
-						System.err.println(failedPaths);
+						BUILDER.append("Detected " + failedPaths.size() + " failed files!");
+						BUILDER.append(failedPaths);
 					}
 					if (!missingPaths.isEmpty())
 					{
-						System.err.println("Detected " + missingPaths.size() + " missing files!");
-						System.err.println(missingPaths);
+						BUILDER.append("Detected " + missingPaths.size() + " missing files!");
+						BUILDER.append(missingPaths);
 					}
 					if (!badFormats.isEmpty())
 					{
-						System.err.println("Detected " + badFormats.size() + " improperly formatted lines!");
-						System.err.println(badFormats);
+						BUILDER.append("Detected " + badFormats.size() + " improperly formatted lines!");
+						BUILDER.append(badFormats);
 					}
+					System.out.println(BUILDER);
+					if (outputPath != null)
+						System.out.println("Exported to: " + Files.write(Paths.get(outputPath.toString(), "checksum_report.log"), BUILDER.toString().getBytes()));
 				}
 				else
 					cancel();
@@ -142,7 +163,7 @@ public class Main
 				System.out.println("Recogized path as: " + path + " and algorithm as: " + digest.getAlgorithm() + (outputPath == null ? " and no output path" : " with the output path: " + outputPath) + ", continue? (boolean)");
 				if (Boolean.parseBoolean(reader.readLine()))
 				{
-					final File checkPath = path.toFile();
+					final File checkPath = path.toFile();// TODO Replace with Path
 					System.out.println("Starting checksum of path: " + checkPath);
 					calculateFromFiles(checkPath.listFiles(), verbose);
 					FILE_CHECKSUMS.forEach(c -> c.addToBuilder(BUILDER));
@@ -156,8 +177,16 @@ public class Main
 			}
 		} catch (UnrecognizedOptionException e)
 		{
-			System.err.println("Unrecognized option submitted: " + e.getOption());
+			System.err.println(e.getMessage());
 			System.exit(1);
+		} catch (MissingOptionException | MissingArgumentException e)
+		{
+			System.err.println(e.getMessage());
+			System.exit(2);
+		} catch (AlreadySelectedException e)
+		{
+			System.err.println(e.getMessage());
+			System.exit(3);
 		} catch (Exception e)
 		{
 			System.err.println("Unable to complete execution, caught exception: " + e + '.');
@@ -165,7 +194,7 @@ public class Main
 			System.exit(10);
 		}
 	}
-	
+	// TODO Update to use a DirectoryStream<> from a Path
 	private static void calculateFromFiles(File[] files, boolean verbose) throws IOException
 	{
 		for (File file : files)
