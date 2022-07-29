@@ -1,11 +1,12 @@
 package main;
 
 import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
@@ -42,10 +43,10 @@ public class Main
 		OPTIONS.addOption(Option.builder("c").longOpt("check").desc("Check and verify a checksum file instead of generating one.").build());
 		OPTIONS.addOption(Option.builder("a").longOpt("algorithm").desc("The algorithm to use for the checksum. Defaults to SHA-256.").hasArg().argName("algorithm").optionalArg(true).build());
 		OPTIONS.addOption(Option.builder("v").longOpt("verbose").desc("Verbose printing of the progress. Ideally should only be used when exporting the result, since the printing may be lengthy.").build());
-		OPTIONS.addOption(Option.builder("e").longOpt("export").desc("Export path of the checksums file or log report.").hasArg().argName("export path").optionalArg(false).build());
+		OPTIONS.addOption(Option.builder("e").longOpt("export").desc("Export path of the checksums file or log report. Defaults to the input path.").hasArg().argName("export path").optionalArg(true).build());
 		OPTIONS.addOptionGroup(group);
 	}
-	private static Path path = Paths.get("");
+	private static Path inputPath = Paths.get("");
 	private static Path outputPath;
 	private static MessageDigest digest;
 	private static final Supplier<String> EXTENSION_SUPPLIER = () ->
@@ -76,23 +77,23 @@ public class Main
 				System.exit(2);
 			}
 			if (commandLine.hasOption('p'))
-				path = Paths.get(commandLine.getOptionValue('p', ""));
+				inputPath = Paths.get(commandLine.getOptionValue('p', ""));
 
 			digest = MessageDigest.getInstance(commandLine.getOptionValue('a', "SHA-256").toUpperCase());
 			if (commandLine.hasOption('e'))
-				outputPath = Paths.get(commandLine.getOptionValue('e'));
+				outputPath = Paths.get(commandLine.getOptionValue('e', inputPath.toString()));
 			final boolean verbose = commandLine.hasOption('v');
 			if (commandLine.hasOption('c'))
 			{
-				System.out.println("Recognized path as: " + path + " and algorithm as: " + digest.getAlgorithm() + ", continue? (boolean)");
+				System.out.println("Recognized path as: " + inputPath + " and algorithm as: " + digest.getAlgorithm() + ", continue? (boolean)");
 				if (Boolean.parseBoolean(reader.readLine()))
 				{
 					System.out.println("Starting check of checksum file...");
 					final ArrayList<Path> failedPaths = new ArrayList<Path>();
 					final ArrayList<Path> missingPaths = new ArrayList<Path>();
 					final ArrayList<String> badFormats = new ArrayList<String>();
-					BUILDER.append("Checksum integrity report using " + path + " on " + new Date() + '\n');
-					try (final Stream<String> stream = Files.lines(path))
+					BUILDER.append("Checksum integrity report using " + inputPath + " on " + new Date() + '\n');
+					try (final Stream<String> stream = Files.lines(inputPath))
 					{
 						final Iterator<String> iterator = stream.iterator();
 						while (iterator.hasNext())
@@ -105,8 +106,7 @@ public class Main
 								final Path filePath = Paths.get(checksumLine.substring(breakIndex + 2));
 								try
 								{
-									final byte[] hashBytes = digest.digest(Files.readAllBytes(filePath));
-									final String hexHash = bytesToHex(hashBytes);
+									final String hexHash = bytesToHex(getFileChecksum(filePath));
 									final boolean success = hexHash.equals(storedHash), valid = hexHash.length() == storedHash.length();
 									if (verbose)
 										System.out.println(filePath.toString() + ' ' + (success ? "OK" : "FAILED"));
@@ -118,7 +118,7 @@ public class Main
 										BUILDER.append("Possibly wrong algorithm used. Calculated hash is: ").append(hexHash.length()).append(" characters long while stored hash is: ").append(storedHash.length()).append(" characters long.");
 									if (!success)
 										failedPaths.add(filePath);
-								} catch (FileNotFoundException e)
+								} catch (NoSuchFileException e)
 								{
 									if (verbose)
 										System.err.println(filePath.toString() + " NOT FOUND");
@@ -135,20 +135,20 @@ public class Main
 						}
 					}
 					if (failedPaths.isEmpty())
-						BUILDER.append("No failed checksums detected.");
+						BUILDER.append("\nNo failed checksums detected.\n");
 					else
 					{
-						BUILDER.append("Detected " + failedPaths.size() + " failed files!");
+						BUILDER.append("\nDetected " + failedPaths.size() + " failed files!\n");
 						BUILDER.append(failedPaths);
 					}
 					if (!missingPaths.isEmpty())
 					{
-						BUILDER.append("Detected " + missingPaths.size() + " missing files!");
+						BUILDER.append("\nDetected " + missingPaths.size() + " missing files!\n");
 						BUILDER.append(missingPaths);
 					}
 					if (!badFormats.isEmpty())
 					{
-						BUILDER.append("Detected " + badFormats.size() + " improperly formatted lines!");
+						BUILDER.append("\nDetected " + badFormats.size() + " improperly formatted lines!\n");
 						BUILDER.append(badFormats);
 					}
 					System.out.println(BUILDER);
@@ -160,13 +160,16 @@ public class Main
 			}
 			else
 			{
-				System.out.println("Recogized path as: " + path + " and algorithm as: " + digest.getAlgorithm() + (outputPath == null ? " and no output path" : " with the output path: " + outputPath) + ", continue? (boolean)");
+				System.out.println("Recogized path as: " + inputPath + " and algorithm as: " + digest.getAlgorithm() + (outputPath == null ? " and no output path" : " with the output path: " + outputPath) + ", continue? (boolean)");
 				if (Boolean.parseBoolean(reader.readLine()))
 				{
-					final File checkPath = path.toFile();// TODO Replace with Path
-					System.out.println("Starting checksum of path: " + checkPath);
-					calculateFromFiles(checkPath.listFiles(), verbose);
+					System.out.println("Starting checksum of path: " + inputPath);
+					try (final DirectoryStream<Path> fileStream = Files.newDirectoryStream(inputPath))
+					{
+						calculateFromFiles(fileStream, verbose);
+					}
 					FILE_CHECKSUMS.forEach(c -> c.addToBuilder(BUILDER));
+					System.out.println();
 					System.out.println("Finished:");
 					System.out.println(BUILDER);
 					if (outputPath != null)
@@ -194,20 +197,22 @@ public class Main
 			System.exit(10);
 		}
 	}
-	// TODO Update to use a DirectoryStream<> from a Path
-	private static void calculateFromFiles(File[] files, boolean verbose) throws IOException
+
+	private static void calculateFromFiles(DirectoryStream<Path> files, boolean verbose) throws IOException
 	{
-		for (File file : files)
+		for (Path file : files)
 		{
-			if (file.isDirectory())
+			if (Files.isDirectory(file))
 			{
 				if (verbose)
-					System.out.println("Found directory at: " + file.getCanonicalPath());
-				calculateFromFiles(file.listFiles(), verbose);
+					System.out.println("Found directory at: " + file);
+				try (final DirectoryStream<Path> directoryStream = Files.newDirectoryStream(file))
+				{
+					calculateFromFiles(directoryStream, verbose);
+				}
 				continue;
 			}
-			final byte[] fileBytes = Files.readAllBytes(file.toPath());
-			final byte[] hashBytes = digest.digest(fileBytes);
+			final byte[] hashBytes = getFileChecksum(file);
 			final String hexHash = bytesToHex(hashBytes);
 			if (verbose)
 			{
@@ -230,6 +235,17 @@ public class Main
 			builder.append(hex);
 		}
 		return builder.toString();
+	}
+	
+	private static byte[] getFileChecksum(Path path) throws IOException
+	{
+		try (final InputStream inputStream = Files.newInputStream(path))
+		{
+			while (inputStream.available() > 0)
+				digest.update((byte) inputStream.read());
+			
+			return digest.digest();
+		}
 	}
 	
 	private static void cancel()

@@ -1,7 +1,7 @@
 package main;
 
-import java.io.File;
 import java.io.Serializable;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Objects;
 
@@ -11,10 +11,10 @@ public class FileChecksum implements Serializable
 	 * 
 	 */
 	private static final long serialVersionUID = -1593493925541749371L;
-	private final File file;
+	private final Path file;
 	private final byte[] hash;
 	private final String algorithm;
-	public FileChecksum(File file, byte[] hash, String algorithm)
+	public FileChecksum(Path file, byte[] hash, String algorithm)
 	{
 		this.file = file;
 		this.hash = hash;
@@ -24,7 +24,7 @@ public class FileChecksum implements Serializable
 	/**
 	 * @return the file
 	 */
-	public File getFile()
+	public Path getFile()
 	{
 		return file;
 	}
