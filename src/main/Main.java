@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.function.Supplier;
@@ -83,12 +84,14 @@ public class Main
 			if (commandLine.hasOption('e'))
 				outputPath = Paths.get(commandLine.getOptionValue('e', inputPath.toString()));
 			final boolean verbose = commandLine.hasOption('v');
+			final long startTime;
 			if (commandLine.hasOption('c'))
 			{
 				System.out.println("Recognized path as: " + inputPath + " and algorithm as: " + digest.getAlgorithm() + ", continue? (boolean)");
 				if (Boolean.parseBoolean(reader.readLine()))
 				{
 					System.out.println("Starting check of checksum file...");
+					startTime = System.currentTimeMillis();
 					final ArrayList<Path> failedPaths = new ArrayList<Path>();
 					final ArrayList<Path> missingPaths = new ArrayList<Path>();
 					final ArrayList<String> badFormats = new ArrayList<String>();
@@ -139,21 +142,22 @@ public class Main
 					else
 					{
 						BUILDER.append("\nDetected " + failedPaths.size() + " failed files!\n");
-						BUILDER.append(failedPaths);
+						BUILDER.append(iterableToList(failedPaths));
 					}
 					if (!missingPaths.isEmpty())
 					{
 						BUILDER.append("\nDetected " + missingPaths.size() + " missing files!\n");
-						BUILDER.append(missingPaths);
+						BUILDER.append(iterableToList(missingPaths));
 					}
 					if (!badFormats.isEmpty())
 					{
 						BUILDER.append("\nDetected " + badFormats.size() + " improperly formatted lines!\n");
-						BUILDER.append(badFormats);
+						BUILDER.append(iterableToList(badFormats));
 					}
 					System.out.println(BUILDER);
 					if (outputPath != null)
 						System.out.println("Exported to: " + Files.write(Paths.get(outputPath.toString(), "checksum_report.log"), BUILDER.toString().getBytes()));
+					System.out.println(timeFromMillis(System.currentTimeMillis() - startTime));
 				}
 				else
 					cancel();
@@ -164,16 +168,27 @@ public class Main
 				if (Boolean.parseBoolean(reader.readLine()))
 				{
 					System.out.println("Starting checksum of path: " + inputPath);
-					try (final DirectoryStream<Path> fileStream = Files.newDirectoryStream(inputPath))
+					startTime = System.currentTimeMillis();
+					if (Files.isRegularFile(inputPath))
 					{
-						calculateFromFiles(fileStream, verbose);
+						System.out.println("Path is actually file...");
+						new FileChecksum(inputPath, getFileChecksum(inputPath), digest.getAlgorithm()).addToBuilder(BUILDER);
 					}
-					FILE_CHECKSUMS.forEach(c -> c.addToBuilder(BUILDER));
+					else
+					{
+						try (final DirectoryStream<Path> fileStream = Files.newDirectoryStream(inputPath))
+						{
+							calculateFromFiles(fileStream, verbose);
+						}
+						FILE_CHECKSUMS.sort(Comparator.comparing(FileChecksum::getFile, Comparator.comparing(Path::toString)));
+						FILE_CHECKSUMS.forEach(c -> c.addToBuilder(BUILDER));
+					}
 					System.out.println();
 					System.out.println("Finished:");
 					System.out.println(BUILDER);
 					if (outputPath != null)
 						System.out.println("Exported to: " + Files.write(Paths.get(outputPath.toString(), "checksum." + EXTENSION_SUPPLIER.get()), BUILDER.toString().getBytes()));
+					System.out.println(timeFromMillis(System.currentTimeMillis() - startTime));
 				}
 				else
 					cancel();
@@ -246,6 +261,34 @@ public class Main
 			
 			return digest.digest();
 		}
+	}
+	
+	private static String iterableToList(Iterable<? extends Object> iterable)
+	{
+		final StringBuilder builder = new StringBuilder();
+		for (Object o : iterable)
+			builder.append(" - ").append(o).append('\n');
+		return builder.toString();
+	}
+	
+	private static String timeFromMillis(long timeIn)
+	{
+		final StringBuilder builder = new StringBuilder("Operation took: ");
+		final long secondMillis = 1000, minuteMillis = 60 * secondMillis, hourMillis = 60 * minuteMillis;
+		long time = timeIn;
+		if (time >= hourMillis)
+		{
+			builder.append(Math.floorDiv(time, hourMillis)).append(" hour(s) ");
+			time %= hourMillis;
+		}
+		if (time >= minuteMillis)
+		{
+			builder.append(Math.floorDiv(time, minuteMillis)).append(" minute(s) ");
+			time %= minuteMillis;
+		}
+		if (time >= secondMillis)
+			builder.append((double) time / secondMillis).append(" second(s)");
+		return builder.append('.').toString();
 	}
 	
 	private static void cancel()
