@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.Iterator;
+import java.util.List;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
@@ -31,6 +32,7 @@ import org.apache.commons.cli.UnrecognizedOptionException;
 
 public class Main
 {
+	public static final int MEGABYTE = 1024 * 1024, BUFFER = MEGABYTE * 20;
 	private static final Options OPTIONS = new Options();
 	private static final CommandLineParser PARSER = new DefaultParser();
 	private static final HelpFormatter HELP_FORMATTER = new HelpFormatter();
@@ -176,11 +178,17 @@ public class Main
 					}
 					else
 					{
-						try (final DirectoryStream<Path> fileStream = Files.newDirectoryStream(inputPath))
+						final ArrayList<Path> paths = new ArrayList<Path>();
+						if (verbose)
+							System.out.println("Looking for files and folders...");
+						try (final DirectoryStream<Path> stream = Files.newDirectoryStream(inputPath))
 						{
-							calculateFromFiles(fileStream, verbose);
+							getAllPaths(stream, paths, verbose);
 						}
-						FILE_CHECKSUMS.sort(Comparator.comparing(FileChecksum::getFile, Comparator.comparing(Path::toString)));
+						if (verbose)
+							System.out.println("Calculating checksums...");
+						calculateFromFiles(paths, verbose);
+						FILE_CHECKSUMS.sort(Comparator.comparing(FileChecksum::getFile, Comparator.comparing(Path::toString, Comparator.comparing(String::toLowerCase))));
 						FILE_CHECKSUMS.forEach(c -> c.addToBuilder(BUILDER));
 					}
 					System.out.println();
@@ -213,9 +221,9 @@ public class Main
 		}
 	}
 
-	private static void calculateFromFiles(DirectoryStream<Path> files, boolean verbose) throws IOException
+	private static void getAllPaths(DirectoryStream<Path> start, List<Path> paths, boolean verbose) throws IOException
 	{
-		for (Path file : files)
+		for (Path file : start)
 		{
 			if (Files.isDirectory(file))
 			{
@@ -223,18 +231,28 @@ public class Main
 					System.out.println("Found directory at: " + file);
 				try (final DirectoryStream<Path> directoryStream = Files.newDirectoryStream(file))
 				{
-					calculateFromFiles(directoryStream, verbose);
+					getAllPaths(directoryStream, paths, verbose);
 				}
-				continue;
 			}
+			else
+			{
+				if (verbose)
+					System.out.println("Found file at: " + file);
+				paths.add(file);
+			}
+		}
+	}
+	
+	private static void calculateFromFiles(Iterable<Path> files, boolean verbose) throws IOException
+	{
+		for (Path file : files)
+		{
+			if (verbose)
+				System.out.println("Calculating checksum of: " + file);
 			final byte[] hashBytes = getFileChecksum(file);
 			final String hexHash = bytesToHex(hashBytes);
 			if (verbose)
-			{
-				System.out.println("Found file at: " + file);
 				System.out.println("Checksum calculated as: " + hexHash);
-			}
-//			BUILDER.append(hexHash).append("  ").append(file.getCanonicalPath()).append('\n');
 			FILE_CHECKSUMS.add(new FileChecksum(file, hashBytes, digest.getAlgorithm()));
 		}
 	}
@@ -254,11 +272,18 @@ public class Main
 	
 	private static byte[] getFileChecksum(Path path) throws IOException
 	{
+		final long size = Files.size(path);
 		try (final InputStream inputStream = Files.newInputStream(path))
 		{
-			while (inputStream.available() > 0)
-				digest.update((byte) inputStream.read());
-			
+			long read = 0;
+			while (read < size)
+			{
+				final int alloc = (int) Math.min(BUFFER, size - read);
+				final byte[] buffer = new byte[alloc];
+				inputStream.read(buffer);
+				digest.update(buffer);
+				read += alloc;
+			}
 			return digest.digest();
 		}
 	}
