@@ -30,9 +30,12 @@ import org.apache.commons.cli.OptionGroup;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.UnrecognizedOptionException;
 
+import me.tongfei.progressbar.ProgressBar;
+import me.tongfei.progressbar.ProgressBarBuilder;
+
 public class Main
 {
-	public static final int MEGABYTE = 1024 * 1024, BUFFER = MEGABYTE * 20;
+	public static final int MEGABYTE = 1024 * 1024, BUFFER = 1024 * 8;
 	private static final Options OPTIONS = new Options();
 	private static final CommandLineParser PARSER = new DefaultParser();
 	private static final HelpFormatter HELP_FORMATTER = new HelpFormatter();
@@ -111,6 +114,7 @@ public class Main
 								final Path filePath = Paths.get(checksumLine.substring(breakIndex + 2));
 								try
 								{
+									System.out.println("Checking " + filePath + " ...");
 									final String hexHash = bytesToHex(getFileChecksum(filePath));
 									final boolean success = hexHash.equals(storedHash), valid = hexHash.length() == storedHash.length();
 									if (verbose)
@@ -187,7 +191,10 @@ public class Main
 						}
 						if (verbose)
 							System.out.println("Calculating checksums...");
-						calculateFromFiles(paths, verbose);
+//						final ProgressBarBuilder builder = new ProgressBarBuilder()
+//								.showSpeed()
+//								.setTaskName("Overall");
+						calculateFromFiles(paths, paths.size(), verbose);
 						FILE_CHECKSUMS.sort(Comparator.comparing(FileChecksum::getFile, Comparator.comparing(Path::toString, Comparator.comparing(String::toLowerCase))));
 						FILE_CHECKSUMS.forEach(c -> c.addToBuilder(BUILDER));
 					}
@@ -243,12 +250,16 @@ public class Main
 		}
 	}
 	
-	private static void calculateFromFiles(Iterable<Path> files, boolean verbose) throws IOException
+	private static void calculateFromFiles(List<Path> files, int total, boolean verbose) throws IOException
 	{
+		int count = 0;
 		for (Path file : files)
 		{
 			if (verbose)
+			{
 				System.out.println("Calculating checksum of: " + file);
+				System.out.println("File #" + ++count + '/' + total);
+			}
 			final byte[] hashBytes = getFileChecksum(file);
 			final String hexHash = bytesToHex(hashBytes);
 			if (verbose)
@@ -273,7 +284,12 @@ public class Main
 	private static byte[] getFileChecksum(Path path) throws IOException
 	{
 		final long size = Files.size(path);
-		try (final InputStream inputStream = Files.newInputStream(path))
+		final ProgressBarBuilder builder = new ProgressBarBuilder()
+				.setUnit("MB", MEGABYTE)
+				.showSpeed()
+				.setInitialMax(size)
+				.setTaskName("Reading...");
+		try (final InputStream inputStream = ProgressBar.wrap(Files.newInputStream(path), builder))
 		{
 			long read = 0;
 			while (read < size)
