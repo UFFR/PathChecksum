@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -31,7 +32,7 @@ import me.tongfei.progressbar.ProgressBarBuilder;
 
 public class Main
 {
-	public static final String VERSION = "v1.9";
+	public static final String VERSION = "v1.8.5";
 	public static final int MEGABYTE = 1024 * 1024, BUFFER = MEGABYTE * 8;
 	private static final Options OPTIONS = new Options();
 	private static final CommandLineParser PARSER = new DefaultParser();
@@ -42,19 +43,22 @@ public class Main
 	{
 		final OptionGroup group = new OptionGroup();
 		group.addOption(Option.builder("h").longOpt("help").desc("Print the help screen.").build());
-		group.addOption(Option.builder("p").longOpt("path").desc("The path to check files. Defaults to running path.").hasArg().argName("check path").required().build());
+		group.addOption(Option.builder("p").longOpt("path").desc("The path to check files. Defaults to running path.").hasArg().optionalArg(true).argName("check path").required().build());
 		OPTIONS.addOption(Option.builder("c").longOpt("check").desc("Check and verify a checksum file instead of generating one.").build());
 		OPTIONS.addOption(Option.builder("a").longOpt("algorithm").desc("The algorithm to use for the checksum. Defaults to SHA-256.").hasArg().argName("algorithm").optionalArg(true).build());
 		OPTIONS.addOption(Option.builder("v").longOpt("verbose").desc("Verbose printing of the progress. Ideally should only be used when exporting the result, since the printing may be lengthy.").build());
 		OPTIONS.addOption(Option.builder("e").longOpt("export").desc("Export path of the checksums file or log report. Defaults to the input path.").hasArg().argName("export path").optionalArg(true).build());
+		OPTIONS.addOption(Option.builder().longOpt("force-absolute").desc("Force the use of absolute paths in the output file, in case the runtime location is the same as the input path.").build());
 		OPTIONS.addOptionGroup(group);
 	}
-	private static Path inputPath;
+	private static Path inputPath = Paths.get(System.getProperty("user.dir"));
 	private static Optional<Path> outputPath = Optional.empty();
 	private static MessageDigest digest;
 	public static void main(String[] args)
 	{
 		final long startTime;
+		final boolean absolutePathNames;
+		final String completeTime;
 		try (final Scanner scanner = new Scanner(System.in))
 		{
 			final CommandLine commandLine = PARSER.parse(OPTIONS, args);
@@ -70,10 +74,11 @@ public class Main
 			}
 			if (commandLine.hasOption('p'))
 				inputPath = Paths.get(commandLine.getOptionValue('p', System.getProperty("user.dir")));
+			absolutePathNames = commandLine.hasOption("force-absolute");
 
 			digest = MessageDigest.getInstance(commandLine.getOptionValue('a', "SHA-256").toUpperCase());
 			if (commandLine.hasOption('e'))
-				outputPath = Optional.of(Paths.get(commandLine.getOptionValue('e', inputPath.toString())));
+				outputPath = Optional.of(Paths.get(commandLine.getOptionValue('e', inputPath.toAbsolutePath().toString())));
 			final boolean verbose = commandLine.hasOption('v');
 			if (commandLine.hasOption('c'))
 			{
@@ -89,14 +94,23 @@ public class Main
 					try (final Stream<String> stream = Files.lines(inputPath))
 					{
 						final Iterator<String> iterator = stream.iterator();
+						int lineNum = 0;
 						while (iterator.hasNext())
 						{
+							lineNum++;
 							final String checksumLine = iterator.next();
 							try
 							{
 								final int breakIndex = checksumLine.indexOf("  ");
 								final String storedHash = checksumLine.substring(0, breakIndex);
 								final Path filePath = Paths.get(checksumLine.substring(breakIndex + 2));
+								
+								if (!validHash(storedHash))
+								{
+									noteBadFormat(verbose, checksumLine, lineNum, badFormats);
+									continue;
+								}
+								
 								try
 								{
 									System.out.println("Checking [" + filePath + "] ...");
@@ -107,7 +121,7 @@ public class Main
 									if (verbose && !valid)
 										System.err.println("Possibly wrong algorithm used. Calculated hash is: " + hexHash.length() + " characters long while stored hash is: " + storedHash.length() + " characters long.");
 									
-									BUILDER.append(filePath).append(success ? " passed." : " failed!").append('\n');
+									BUILDER.append('[').append(filePath).append(']').append(success ? " passed." : " failed!").append('\n');
 									if (!valid)
 										BUILDER.append("Possibly wrong algorithm used. Calculated hash is: ").append(hexHash.length()).append(" characters long while stored hash is: ").append(storedHash.length()).append(" characters long.");
 									if (!success)
@@ -121,10 +135,7 @@ public class Main
 								}
 							} catch (StringIndexOutOfBoundsException e)
 							{
-								if (verbose)
-									System.err.println("Improperly formatted line detected: " + checksumLine);
-								BUILDER.append("Line: [").append(checksumLine).append("] is improperly formatted.");
-								badFormats.add(checksumLine.toString());
+								noteBadFormat(verbose, checksumLine, lineNum, badFormats);
 							}
 						}
 					}
@@ -145,9 +156,9 @@ public class Main
 						BUILDER.append("\nDetected ").append(badFormats.size()).append(" improperly formatted lines!\n");
 						BUILDER.append(iterableToList(badFormats));
 					}
-					System.out.println();
-					System.out.println("Finished");
-					BUILDER.append('\n').append(timeFromMillis(System.currentTimeMillis() - startTime));
+					System.out.println("\nFinished");
+					completeTime = timeFromMillis(System.currentTimeMillis() - startTime);
+					BUILDER.append('\n').append(completeTime);
 					System.out.println(BUILDER);
 					if (outputPath.isPresent())
 						System.out.println("Exported to: " + Files.write(Paths.get(outputPath.get().toString(), "checksum_report.log"), BUILDER.toString().getBytes()));
@@ -165,7 +176,7 @@ public class Main
 					if (Files.isRegularFile(inputPath))
 					{
 						System.out.println("Path is actually file...");
-						new FileChecksum(inputPath, getFileChecksum(inputPath), digest.getAlgorithm()).addToBuilder(BUILDER);
+						new FileChecksum(inputPath, getFileChecksum(inputPath), digest.getAlgorithm()).addToBuilder(BUILDER, absolutePathNames);
 					}
 					else
 					{
@@ -176,17 +187,20 @@ public class Main
 						{
 							getAllPaths(stream, paths, verbose);
 						}
+						System.out.println(iterableToList(paths));
 						if (verbose)
 							System.out.println("Calculating checksums...");
 //						final ProgressBarBuilder builder = new ProgressBarBuilder()
 //								.showSpeed()
 //								.setTaskName("Overall");
 						calculateFromFiles(paths, paths.size(), verbose);
-						FILE_CHECKSUMS.sort(Comparator.comparing(FileChecksum::getFile, Comparator.comparing(Path::toString, Comparator.comparing(String::toLowerCase))));
-						FILE_CHECKSUMS.forEach(c -> c.addToBuilder(BUILDER));
+						FILE_CHECKSUMS.sort(Comparator.comparing(FileChecksum::getFile, Comparator.comparingInt(Path::getNameCount).reversed().thenComparing(Comparator.naturalOrder())));
+						FILE_CHECKSUMS.forEach(c -> c.addToBuilder(BUILDER, absolutePathNames));
 					}
 					System.out.println("\nFinished:\n");
-					BUILDER.append('\n').append(timeFromMillis(System.currentTimeMillis() - startTime));
+					completeTime = timeFromMillis(System.currentTimeMillis() - startTime);
+					System.out.println();
+					System.out.println(completeTime);
 					System.out.println(BUILDER);
 					if (outputPath.isPresent())
 						System.out.println("Exported to: " + Files.write(Paths.get(outputPath.get().toString(), "checksum." + extensionProvider()), BUILDER.toString().getBytes()));
@@ -201,7 +215,7 @@ public class Main
 		} catch (Exception e)
 		{
 			System.err.println("Unable to complete execution, caught exception:");
-			e.printStackTrace();
+			System.err.println(e);
 			System.exit(10);
 		}
 	}
@@ -218,25 +232,41 @@ public class Main
 		return builder.toString().toLowerCase();
 	}
 	
+	private static boolean validHash(String hash)
+	{
+		for (char c : hash.toLowerCase().toCharArray())
+			if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+				return false;
+		return true;
+	}
+	
+	private static void noteBadFormat(boolean verbose, String checksumLine, int lineNum, List<String> badFormats)
+	{
+		if (verbose)
+			System.err.println("Improperly formatted line detected: " + checksumLine);
+		BUILDER.append("Line: #").append(lineNum).append(" [").append(checksumLine).append("] is improperly formatted.\n");
+		badFormats.add(checksumLine);
+	}
+	
 	private static void getAllPaths(DirectoryStream<Path> start, List<Path> paths, boolean verbose) throws IOException
 	{
-		for (Path file : start)
+		for (Path path : start)
 		{
-			if (Files.isDirectory(file))
+			if (Files.isDirectory(path))
 			{
 				if (verbose)
-					System.out.println("Found directory at: " + file);
-				try (final DirectoryStream<Path> directoryStream = Files.newDirectoryStream(file))
+					System.out.println("Found directory at: " + path);
+				try (final DirectoryStream<Path> directoryStream = Files.newDirectoryStream(path))
 				{
 					getAllPaths(directoryStream, paths, verbose);
 				}
-			}
-			else
+			} else if (Files.isRegularFile(path))
 			{
 				if (verbose)
-					System.out.println("Found file at: " + file);
-				paths.add(file);
-			}
+					System.out.println("Found file at: " + path);
+				paths.add(path);
+			} else if (verbose)
+				System.err.println("Warning! Path [" + path + "] no longer exists! Skipping path...");
 		}
 	}
 	
@@ -279,7 +309,7 @@ public class Main
 				.showSpeed()
 				.setInitialMax(size)
 				.setTaskName("Reading...");
-		try (final InputStream inputStream = ProgressBar.wrap(Files.newInputStream(path), builder))
+		try (final InputStream inputStream = new DigestInputStream(ProgressBar.wrap(Files.newInputStream(path), builder), getDigest()))
 		{
 			long read = 0;
 			while (read < size)
@@ -287,14 +317,13 @@ public class Main
 				final int alloc = (int) Math.min(BUFFER, size - read);
 				final byte[] buffer = new byte[alloc];
 				inputStream.read(buffer);
-				digest.update(buffer);
 				read += alloc;
 			}
 			return digest.digest();
 		}
 	}
 	
-	private static String iterableToList(Iterable<? extends Object> iterable)
+	private static String iterableToList(Iterable<?> iterable)
 	{
 		final StringBuilder builder = new StringBuilder();
 		for (Object o : iterable)
@@ -330,6 +359,11 @@ public class Main
 	protected static MessageDigest getDigest()
 	{
 		return digest;
+	}
+	
+	public static Path getInputPath()
+	{
+		return inputPath;
 	}
 
 }
