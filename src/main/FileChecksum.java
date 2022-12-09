@@ -45,9 +45,11 @@ public class FileChecksum implements Serializable
 		return algorithm;
 	}
 
-	public void addToBuilder(StringBuilder builder)
+	public void addToBuilder(StringBuilder builder, boolean absolutePaths)
 	{
-		builder.append(Main.bytesToHex(getHash())).append("  ").append(getFile()).append('\n');
+		builder.append(Main.bytesToHex(getHash())).append("  ").append(absolutePaths
+				? getFile() : getFile().startsWith(System.getProperty("user.dir"))
+						? Main.getInputPath().relativize(getFile()) : getFile()).append('\n');
 	}
 	
 	@Override
