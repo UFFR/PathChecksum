@@ -32,7 +32,7 @@ import me.tongfei.progressbar.ProgressBarBuilder;
 
 public class Main
 {
-	public static final String VERSION = "v1.8.5";
+	public static final String VERSION = "v1.8.5b";
 	public static final int MEGABYTE = 1024 * 1024, BUFFER = MEGABYTE * 8;
 	private static final Options OPTIONS = new Options();
 	private static final CommandLineParser PARSER = new DefaultParser();
@@ -72,13 +72,12 @@ public class Main
 				System.err.println("No arguments passed, program requires arguments!");
 				System.exit(2);
 			}
-			if (commandLine.hasOption('p'))
-				inputPath = Paths.get(commandLine.getOptionValue('p', System.getProperty("user.dir")));
+			inputPath = Paths.get(commandLine.getOptionValue('p', System.getProperty("user.dir")));
 			absolutePathNames = commandLine.hasOption("force-absolute");
 
 			digest = MessageDigest.getInstance(commandLine.getOptionValue('a', "SHA-256").toUpperCase());
 			if (commandLine.hasOption('e'))
-				outputPath = Optional.of(Paths.get(commandLine.getOptionValue('e', inputPath.toAbsolutePath().toString())));
+				outputPath = Optional.of(commandLine.hasOption('e') ? Paths.get(commandLine.getOptionValue('e')) : inputPath.toAbsolutePath().getParent());
 			final boolean verbose = commandLine.hasOption('v');
 			if (commandLine.hasOption('c'))
 			{
@@ -102,7 +101,7 @@ public class Main
 							try
 							{
 								final int breakIndex = checksumLine.indexOf("  ");
-								final String storedHash = checksumLine.substring(0, breakIndex);
+								final String storedHash = checksumLine.substring(0, breakIndex).toLowerCase();
 								final Path filePath = Paths.get(checksumLine.substring(breakIndex + 2));
 								
 								if (!validHash(storedHash))
@@ -162,11 +161,9 @@ public class Main
 					System.out.println(BUILDER);
 					if (outputPath.isPresent())
 						System.out.println("Exported to: " + Files.write(Paths.get(outputPath.get().toString(), "checksum_report.log"), BUILDER.toString().getBytes()));
-				}
-				else
+				} else
 					cancel();
-			}
-			else
+			} else
 			{
 				System.out.println("Recogized path as: " + inputPath + " and algorithm as: " + digest.getAlgorithm() + (outputPath.isPresent() ? " with the output path: " + outputPath : " and no output path") + ", continue? (boolean)");
 				if (scanner.nextBoolean())
@@ -177,8 +174,7 @@ public class Main
 					{
 						System.out.println("Path is actually file...");
 						new FileChecksum(inputPath, getFileChecksum(inputPath), digest.getAlgorithm()).addToBuilder(BUILDER, absolutePathNames);
-					}
-					else
+					} else
 					{
 						final ArrayList<Path> paths = new ArrayList<Path>();
 						if (verbose)
@@ -199,13 +195,12 @@ public class Main
 					}
 					System.out.println("\nFinished:\n");
 					completeTime = timeFromMillis(System.currentTimeMillis() - startTime);
+					System.out.println(BUILDER);
 					System.out.println();
 					System.out.println(completeTime);
-					System.out.println(BUILDER);
 					if (outputPath.isPresent())
-						System.out.println("Exported to: " + Files.write(Paths.get(outputPath.get().toString(), "checksum." + extensionProvider()), BUILDER.toString().getBytes()));
-				}
-				else
+						System.out.println("Exported to: " + Files.write(outputPath.get().resolve("checksum." + extensionProvider()), BUILDER.toString().getBytes()));
+				} else
 					cancel();
 			}
 		} catch (ParseException e)
@@ -214,8 +209,7 @@ public class Main
 			System.exit(1);
 		} catch (Exception e)
 		{
-			System.err.println("Unable to complete execution, caught exception:");
-			System.err.println(e);
+			System.err.println("Unable to complete execution, caught exception: [" + e + ']');
 			System.exit(10);
 		}
 	}
