@@ -37,6 +37,7 @@ Report any found bugs to this repo.
 ## Planned Features
  - Option to use purely ASCII progress bars, in case the user's terminal doesn't support ANSI.
  - Option to disable progress bars altogether, where undesired or don't work properly.
+ - An `--exclude` parameter to exclude certain files or directories so the user doesn't have to do more manual work.
 
 ## Libraries Used
  - ~Apache Commons CLI - https://github.com/apache/commons-cli~ (No longer used as of v2.0.0r)
