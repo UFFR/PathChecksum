@@ -42,7 +42,8 @@ import uffrlib.misc.Version;
 		exitCodeListHeading = "%nExit Codes:%n",
 		exitCodeList = {
 				"0:Normal execution",
-				"1:Any exception"},
+				"1:General exception",
+				"2:Invalid parameter format"},
 		footerHeading = "%n@|bold Example:|@%n",
 		footer = {"java -jar path-checksum -p ~/Documents -a sha1 -e ~/Checksums -v"})
 public class Main implements Callable<Integer>
