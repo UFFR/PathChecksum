@@ -1,5 +1,7 @@
 package main;
 
+import static uffrlib.misc.StringUtil.bytesToHex;
+
 import java.io.Serializable;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -7,60 +9,64 @@ import java.util.Objects;
 
 public class FileChecksum implements Serializable
 {
-	/**
-	 * 
-	 */
-	private static final long serialVersionUID = -1593493925541749371L;
+	private static final long serialVersionUID = -4930384739891546680L;
 	private final Path file;
-	private final byte[] hash;
-	private final String algorithm;
+	private final String hash, algorithm;
+	private final byte[] bytes;
+	
 	public FileChecksum(Path file, byte[] hash, String algorithm)
 	{
 		this.file = file;
+		this.bytes = hash;
+		this.hash = bytesToHex(true, hash);
+		this.algorithm = algorithm;
+	}
+	
+	public FileChecksum(Path file, byte[] bytes, String hash, String algorithm)
+	{
+		this.file = file;
+		this.bytes = bytes;
 		this.hash = hash;
 		this.algorithm = algorithm;
 	}
 	
-	/**
-	 * @return the file
-	 */
 	public Path getFile()
 	{
 		return file;
 	}
 
-	/**
-	 * @return the hash
-	 */
-	public byte[] getHash()
+	public String getHash()
 	{
-		return hash.clone();
+		return hash;
 	}
 
-	/**
-	 * @return the algorithm
-	 */
 	public String getAlgorithm()
 	{
 		return algorithm;
 	}
-
-	public void addToBuilder(StringBuilder builder, boolean absolutePaths)
-	{
-		builder.append(Main.bytesToHex(getHash())).append("  ").append(absolutePaths
-				? getFile() : getFile().startsWith(System.getProperty("user.dir"))
-						? Main.getInputPath().relativize(getFile()) : getFile()).append('\n');
-	}
 	
+	public byte[] getBytes()
+	{
+		return bytes.clone();
+	}
+
+	public void addToBuilder(StringBuilder builder, Path inputPath, boolean absolutePaths)
+	{
+		builder.append(getHash()).append("  ").append(absolutePaths
+				? getFile().toAbsolutePath() : getFile().startsWith(inputPath) && !getFile().equals(inputPath)
+						? inputPath.relativize(getFile()) : getFile()).append('\n');
+	}
+
 	@Override
 	public int hashCode()
 	{
 		final int prime = 31;
 		int result = 1;
-		result = prime * result + Arrays.hashCode(hash);
-		result = prime * result + Objects.hash(algorithm, file);
+		result = prime * result + Arrays.hashCode(bytes);
+		result = prime * result + Objects.hash(algorithm, file, hash);
 		return result;
 	}
+
 	@Override
 	public boolean equals(Object obj)
 	{
@@ -69,15 +75,16 @@ public class FileChecksum implements Serializable
 		if (!(obj instanceof FileChecksum))
 			return false;
 		final FileChecksum other = (FileChecksum) obj;
-		return Objects.equals(algorithm, other.algorithm) && Objects.equals(file, other.file)
-				&& Arrays.equals(hash, other.hash);
+		return Objects.equals(algorithm, other.algorithm) && Arrays.equals(bytes, other.bytes)
+				&& Objects.equals(file, other.file) && Objects.equals(hash, other.hash);
 	}
+
 	@Override
 	public String toString()
 	{
 		final StringBuilder builder = new StringBuilder();
-		builder.append("FileChecksum [file=").append(file).append(", hash=").append(Arrays.toString(hash))
-				.append(", algorithm=").append(algorithm).append(']');
+		builder.append("FileChecksum [file=").append(file).append(", hash=").append(hash).append(", algorithm=")
+				.append(algorithm).append(", bytes=").append(Arrays.toString(bytes)).append(']');
 		return builder.toString();
 	}
 
