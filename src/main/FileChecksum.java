@@ -1,7 +1,5 @@
 package main;
 
-import static uffrlib.misc.StringUtil.bytesToHex;
-
 import java.io.Serializable;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -18,7 +16,7 @@ public class FileChecksum implements Serializable
 	{
 		this.file = file;
 		this.bytes = hash;
-		this.hash = bytesToHex(true, hash);
+		this.hash = Main.bytesToHex(true, hash);
 		this.algorithm = algorithm;
 	}
 	

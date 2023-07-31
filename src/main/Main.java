@@ -1,12 +1,5 @@
 package main;
 
-import static uffrlib.misc.NumberUtil.GB;
-import static uffrlib.misc.NumberUtil.KB;
-import static uffrlib.misc.NumberUtil.MB;
-import static uffrlib.misc.StringUtil.bytesToHex;
-import static uffrlib.misc.StringUtil.iterableToList;
-import static uffrlib.misc.StringUtil.timeFromMillis;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.DirectoryStream;
@@ -17,18 +10,19 @@ import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 
 import me.tongfei.progressbar.ProgressBar;
 import me.tongfei.progressbar.ProgressBarBuilder;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
-import uffrlib.misc.Version;
 
 @Command(
 		name = "pathsum",
@@ -48,7 +42,12 @@ import uffrlib.misc.Version;
 		footer = {"java -jar path-checksum -p ~/Documents -a sha1 -e ~/Checksums -v"})
 public class Main implements Callable<Integer>
 {
-	public static final Version VERSION = new Version(2);// v2.0.0r
+	public static final Version VERSION = new Version(2, 0, 1);// v2.0.1r
+	// Magnitudes
+	public static final short KB = 1024;
+	public static final int MB = KB * KB;
+	public static final long GB = MB * KB, TB = GB * KB, PB = TB * KB;
+
 	public static final int BUFFER = MB * 8;// 8 MB is roughly ideal size for most applications
 	
 	@Option(names = {"-p", "--path"}, required = true, paramLabel = "path", description = {"The path to check files. Defaults to running path."}, defaultValue = "")
@@ -75,6 +74,16 @@ public class Main implements Callable<Integer>
 		// Notify user
 		System.out.println("Recogized path as: " + inputPath.normalize().toAbsolutePath() + " and algorithm as: " + digest.getAlgorithm().toUpperCase() + (outputPath != null ? " with the output path: " + outputPath : " and no output path") + ", and is in hash mode.");
 		System.out.println("Starting checksum of path: " + inputPath.normalize().toAbsolutePath());
+		
+		// Try to initially create output file, fails here instead of at the very end
+		if (outputPath != null)
+		{
+			// Can't write to directory, convert to a file form
+			if (Files.isDirectory(outputPath))
+				outputPath = outputPath.resolve(nameProvider());
+			
+			Files.createFile(outputPath);
+		}
 		
 		// If given path is a file instead of a folder/directory
 		if (Files.isRegularFile(inputPath))
@@ -118,7 +127,7 @@ public class Main implements Callable<Integer>
 		System.out.println();
 		System.out.println(completeTime);
 		if (outputPath != null)
-			System.out.println("Exported to: " + Files.write(outputPath.resolve(nameProvider()), builder.toString().getBytes()));
+			System.out.println("Exported to: " + Files.write(outputPath.toAbsolutePath(), builder.toString().getBytes()));
 		
 		return 0;
 	}
@@ -446,5 +455,60 @@ public class Main implements Callable<Integer>
 			// Completed
 			return digest.digest();
 		}
+	}
+	
+	/// Imported utilities ///
+	
+	static String bytesToHex(boolean pad, byte...bytes)
+	{
+		final StringBuilder builder = new StringBuilder(bytes.length * 2);
+		for (byte b : bytes)
+		{
+			final String hex = Integer.toHexString(b & 0xff);
+			appendAndPad(pad, 2, hex, builder);
+		}
+		return builder.toString();
+	}
+	
+	private static void appendAndPad(boolean pad, int len, String end, StringBuilder builder)
+	{
+		if (pad && end.length() < len)
+		{
+			final char[] padding = new char[len - end.length()];
+			Arrays.fill(padding, '0');
+			builder.append(padding);
+		}
+		builder.append(end);
+	}
+	
+	private static void iterableToList(Iterable<?> iterable, Consumer<String> appender, boolean newLine)
+	{
+		for (Object o : iterable)
+		{
+			final StringBuilder builder = new StringBuilder();
+			builder.append("- ").append(o);
+			if (newLine)
+				builder.append('\n');
+			appender.accept(builder.toString());
+		}
+	}
+	
+	public static String timeFromMillis(long timeIn)
+	{
+		final StringBuilder builder = new StringBuilder();
+		final long secondMillis = 1000, minuteMillis = 60 * secondMillis, hourMillis = 60 * minuteMillis;
+		long time = timeIn;
+		if (time >= hourMillis)
+		{
+			builder.append(Math.floorDiv(time, hourMillis)).append(" hour(s) ");
+			time %= hourMillis;
+		}
+		if (time >= minuteMillis)
+		{
+			builder.append(Math.floorDiv(time, minuteMillis)).append(" minute(s) ");
+			time %= minuteMillis;
+		}
+		builder.append((double) time / secondMillis).append(" second(s)");
+		return builder.append('.').toString();
 	}
 }
